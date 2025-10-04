@@ -8,6 +8,7 @@
 // #include <absl/container/flat_hash_map.h>
 #include <unordered_map>
 #include <MemoryPool.h>
+#include <cmath>
 
 // Represents a collection of orders at a single price level
 class PriceLevel {
@@ -30,12 +31,23 @@ private:
     // absl::flat_hash_map<int64_t, Order*> orders_by_id; // For quick order lookup by ID
     MemoryPool<Order> order_pool;
 
+    static inline size_t total_trades = 0;
+
     std::set<size_t> active_bids; // indices of price levels with buy orders
     std::set<size_t> active_asks; // indices of price levels with sell orders
 
     size_t price_to_index(double price) const {
-        return static_cast<size_t>((price - MIN_PRICE) / TICK_SIZE);
+        // Snap to nearest tick
+        const double normalized = (price - MIN_PRICE) / TICK_SIZE;
+        long long rounded = std::llround(normalized);
+
+        // Clamp both ends
+        if (rounded < 0) rounded = 0;
+        if (rounded >= static_cast<long long>(NUM_LEVELS)) rounded = static_cast<long long>(NUM_LEVELS) - 1;
+
+        return static_cast<size_t>(rounded);
     }
+
     void match(Order* incoming);
     void insert_order(Order* incoming);
 public:
@@ -46,12 +58,15 @@ public:
             orders_by_id.reserve(100'000);
         }
     // void add_order(int64_t order_id, int64_t price, int32_t quantity, OrderSide side);
-    void process_order(int64_t order_id, int64_t price, int32_t quantity, OrderSide side);
+    void process_order(int64_t order_id, double price, int32_t quantity, OrderSide side);
     void cancel_order(int64_t order_id);
     void modify_order(int64_t order_id, int32_t new_quantity);
 
     // Getter for vector of price levels
     const std::vector<PriceLevel>& get_price_levels() const { return price_levels; }
+
+    size_t get_total_trades() const;
+    void reset_trade_counter();
 };
 
 #endif // ORDERBOOK_LIMITORDERBOOK_H

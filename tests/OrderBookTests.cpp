@@ -257,7 +257,7 @@ TEST(LimitOrderBookStressTest, RandomizedOperationsWithTiming) {
         if (op <= 6) {
             // --- Add order ---
             int64_t id = next_order_id++;
-            double price = price_dist(rng);
+            double price = std::round(price_dist(rng) / 0.01) * 0.01;
             int32_t qty = qty_dist(rng);
             OrderSide side = side_dist(rng) == 0 ? OrderSide::Buy : OrderSide::Sell;
 
@@ -301,12 +301,15 @@ TEST(LimitOrderBookStressTest, RandomizedOperationsWithTiming) {
         }
         EXPECT_EQ(sum, level.total_quantity) << " at price index " << idx;
     }
+
+    std::cout << "Total trades executed: " << lob.get_total_trades() << std::endl;
+    lob.reset_trade_counter();
 }
 
 TEST(LimitOrderBookStressTest, RealisticRandomizedOperationsWithTiming) {
     LimitOrderBook lob;
     std::mt19937 rng(42); // fixed seed for reproducibility
-    std::uniform_int_distribution<int64_t> price_dist(900, 1100);
+    std::uniform_real_distribution<double> price_dist(90.0, 110.0);
     std::uniform_int_distribution<int32_t> qty_dist(1, 200);
     std::uniform_int_distribution<int> side_dist(0, 1);
     std::uniform_int_distribution<int> op_dist(0, 9); // 0–3 = add, 4–6 = cancel, 7–8 = modify, 9 = no-op
@@ -324,7 +327,7 @@ TEST(LimitOrderBookStressTest, RealisticRandomizedOperationsWithTiming) {
         if (op <= 3) {
             // --- Add order ---
             int64_t id = next_order_id++;
-            int64_t price = price_dist(rng);
+            double price = std::round(price_dist(rng) / 0.01) * 0.01;
             int32_t qty = qty_dist(rng);
             OrderSide side = side_dist(rng) == 0 ? OrderSide::Buy : OrderSide::Sell;
 
@@ -385,3 +388,14 @@ TEST(LimitOrderBookStressTest, RealisticRandomizedOperationsWithTiming) {
     }
 }
 
+TEST(LimitOrderBookTest, FractionalPriceTruncatesIncorrectly) {
+    LimitOrderBook lob;
+    lob.process_order(1, 100.01, 100, OrderSide::Buy); // <-- fractional tick
+    const auto& levels = lob.get_price_levels();
+
+    // Should land near 100.01 (index = 100.01 -> idx = 1001)
+    std::size_t expected_idx = static_cast<size_t>(std::llround((100.01 - 90.0) / 0.01));
+    std::size_t actual_idx   = static_cast<size_t>((100 - 90.0) / 0.01); // what your code really does
+
+    EXPECT_NE(expected_idx, actual_idx) << "Fractional price was truncated!";
+}

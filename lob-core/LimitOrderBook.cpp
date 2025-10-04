@@ -1,7 +1,8 @@
 #include "LimitOrderBook.h"
 #include <iostream>
 
-void LimitOrderBook::process_order(int64_t order_id, int64_t price, int32_t quantity, OrderSide side) {
+void LimitOrderBook::process_order(int64_t order_id, double price, int32_t quantity, OrderSide side) {
+    price = std::round(price / TICK_SIZE) * TICK_SIZE;
     Order* new_order_ptr = order_pool.allocate();
     *new_order_ptr = Order{order_id, price, quantity, side};
     orders_by_id[order_id] = new_order_ptr;
@@ -19,12 +20,13 @@ void LimitOrderBook::process_order(int64_t order_id, int64_t price, int32_t quan
 }
 
 void LimitOrderBook::match(Order* incoming) {
+    constexpr double EPSILON = 1e-9;
     if (incoming->side == OrderSide::Buy) {
         while (incoming->quantity > 0 && !active_asks.empty()) {
             size_t best_ask_idx = *active_asks.begin();
             double best_ask_price = MIN_PRICE + best_ask_idx * TICK_SIZE;
 
-            if (incoming->price < best_ask_price) break;
+            if (incoming->price + EPSILON < best_ask_price) break;
 
             auto& level = price_levels[best_ask_idx];
             auto& orders_vec = level.orders;
@@ -34,9 +36,12 @@ void LimitOrderBook::match(Order* incoming) {
                 if (resting->side != OrderSide::Sell) break;
 
                 int32_t trade_qty = std::min(incoming->quantity, resting->quantity);
-                incoming->quantity -= trade_qty;
-                resting->quantity -= trade_qty;
-                level.total_quantity -= trade_qty;
+                if (trade_qty > 0) {
+                    incoming->quantity -= trade_qty;
+                    resting->quantity -= trade_qty;
+                    level.total_quantity -= trade_qty;
+                    total_trades++;
+                }
 
                 if (resting->quantity == 0) {
                     orders_by_id.erase(resting->order_id);
@@ -56,7 +61,7 @@ void LimitOrderBook::match(Order* incoming) {
             size_t best_bid_idx = *active_bids.rbegin();
             double best_bid_price = MIN_PRICE + best_bid_idx * TICK_SIZE;
 
-            if (incoming->price > best_bid_price) break;
+            if (incoming->price - EPSILON > best_bid_price) break;
 
             auto& level = price_levels[best_bid_idx];
             auto& orders_vec = level.orders;
@@ -66,9 +71,12 @@ void LimitOrderBook::match(Order* incoming) {
                 if (resting->side != OrderSide::Buy) break;
 
                 int32_t trade_qty = std::min(incoming->quantity, resting->quantity);
-                incoming->quantity -= trade_qty;
-                resting->quantity -= trade_qty;
-                level.total_quantity -= trade_qty;
+                if (trade_qty > 0) {
+                    incoming->quantity -= trade_qty;
+                    resting->quantity -= trade_qty;
+                    level.total_quantity -= trade_qty;
+                    total_trades++;
+                }
 
                 if (resting->quantity == 0) {
                     orders_by_id.erase(resting->order_id);
@@ -149,4 +157,12 @@ void LimitOrderBook::modify_order(int64_t order_id, int32_t new_quantity) {
 
     size_t idx = price_to_index(order_ptr->price);
     price_levels[idx].total_quantity += diff;
+}
+
+size_t LimitOrderBook::get_total_trades() const {
+    return total_trades;
+}
+
+void LimitOrderBook::reset_trade_counter() {
+    total_trades = 0;
 }

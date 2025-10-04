@@ -10,7 +10,7 @@ enum class OrderSide {
 
 struct Order {
     int64_t order_id;
-    int64_t price;
+    double price;
     int32_t quantity;
     OrderSide side;
 };

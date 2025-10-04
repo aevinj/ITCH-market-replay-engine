@@ -49,6 +49,7 @@
         "streambuf": "cpp",
         "string": "cpp",
         "string_view": "cpp",
-        "algorithm": "cpp"
+        "algorithm": "cpp",
+        "set": "cpp"
     }
 }
