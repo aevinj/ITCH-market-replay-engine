@@ -6,7 +6,6 @@
 #include <stdexcept>
 
 template <typename T>
-
 class MemoryPool {
     private:
         std::vector<T> pool;            // actual storage - contiguous

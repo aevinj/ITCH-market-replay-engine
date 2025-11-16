@@ -1,14 +1,15 @@
 #include <iostream>
 #include <iomanip>
 #include "LimitOrderBook.h"
+#include "MatchingEngine.h" 
 
-// Helpers to work with your fixed ladder
+// Helpers to work with fixed ladder
 static constexpr double MIN_PRICE = 90.0;
 static constexpr double TICK = 0.01;
 static double index_to_price(std::size_t idx) { return MIN_PRICE + idx * TICK; }
 
 // Pretty print the book by scanning all price levels.
-// We’ll show levels that have any quantity, and list orders with side.
+// show levels that have any quantity, and list orders with side.
 void print_book(const LimitOrderBook& lob) {
     const auto& levels = lob.get_price_levels();
 
@@ -41,37 +42,28 @@ void print_book(const LimitOrderBook& lob) {
     }
 }
 
+void printTrade(const TradeEvent& ev) {
+    std::cout << "TRADE: taker#" << ev.taker_id
+              << " maker#" << ev.maker_id
+              << " price=" << ev.price
+              << " qty="   << ev.quantity
+              << "\n";
+}
+
 int main() {
     LimitOrderBook lob;
+    MatchingEngine engine(lob);
 
-    std::cout << "=== Add initial orders ===\n";
-    lob.process_order(1, 100.00, 100, OrderSide::Buy);   // bid @ 100.00
-    lob.process_order(2, 101.00,  50, OrderSide::Buy);   // bid @ 101.00
-    lob.process_order(3, 102.00,  75, OrderSide::Sell);  // ask @ 102.00
-    lob.process_order(4, 103.00, 120, OrderSide::Sell);  // ask @ 103.00
-    print_book(lob);
+    engine.setTradeCallback(printTrade);
 
-    std::cout << "\n=== Add crossing order (Buy 80 @ 103.00) ===\n";
-    // Should match fully with 75 @ 102.00 and 5 with 103.00
-    lob.process_order(5, 103.00, 80, OrderSide::Buy);
-    print_book(lob);
+    engine.submitLimit(1, OrderSide::Buy, 100.00, 100);
+    engine.submitLimit(2, OrderSide::Buy, 101.00, 50);
+    engine.submitLimit(3, OrderSide::Sell, 102.00, 75);
+    engine.submitLimit(4, OrderSide::Sell, 103.00, 120);
 
-    std::cout << "\n=== Add crossing order (Sell 120 @ 100.00) ===\n";
-    // Should hit 101.00 (50) then 100.00 (70), leaving 30 @ 100.00
-    lob.process_order(6, 100.00, 120, OrderSide::Sell);
-    print_book(lob);
-
-    std::cout << "\n=== Cancel an order (order 4 if still alive) ===\n";
-    lob.cancel_order(4);
-    print_book(lob);
-
-    std::cout << "\n=== Modify an order (reduce order 1 to 50 if still alive) ===\n";
-    lob.modify_order(1, 50);
-    print_book(lob);
-
-    std::cout << "\n=== Modify an order (increase order 2 to 200 if still alive) ===\n";
-    lob.modify_order(2, 200);
-    print_book(lob);
+    std::cout << "\n=== Add crossing order (Buy 80 @ 103) ===\n";
+    engine.submitLimit(5, OrderSide::Buy, 103.00, 80);
 
     return 0;
+
 }

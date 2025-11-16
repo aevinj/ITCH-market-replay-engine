@@ -1,14 +1,19 @@
 #include "LimitOrderBook.h"
 #include <iostream>
+#include <functional>
 
-void LimitOrderBook::process_order(int64_t order_id, double price, int32_t quantity, OrderSide side) {
+void LimitOrderBook::process_order(int64_t order_id, double price, int32_t quantity, OrderSide side, 
+    const std::function<void(const Order&, const Order&, double, int32_t)>& onTrade) {
     price = std::round(price / TICK_SIZE) * TICK_SIZE;
     Order* new_order_ptr = order_pool.allocate();
-    *new_order_ptr = Order{order_id, price, quantity, side};
+    new_order_ptr->order_id = order_id;
+    new_order_ptr->price = price;
+    new_order_ptr->quantity = quantity;
+    new_order_ptr->side = side;
     orders_by_id[order_id] = new_order_ptr;
     
     // try to match
-    match(new_order_ptr);
+    match(new_order_ptr, onTrade);
 
     // if still has quantity, insert into book
     if (new_order_ptr->quantity > 0) {
@@ -19,8 +24,12 @@ void LimitOrderBook::process_order(int64_t order_id, double price, int32_t quant
     }
 }
 
-void LimitOrderBook::match(Order* incoming) {
-    constexpr double EPSILON = 1e-9;
+void LimitOrderBook::process_order(int64_t order_id, double price, int32_t quantity, OrderSide side)
+{
+    process_order(order_id, price, quantity, side, nullptr);
+}
+
+void LimitOrderBook::match(Order* incoming, const std::function<void(const Order&, const Order&, double, int32_t)>& onTrade) {
     if (incoming->side == OrderSide::Buy) {
         while (incoming->quantity > 0 && !active_asks.empty()) {
             size_t best_ask_idx = *active_asks.begin();
@@ -41,6 +50,10 @@ void LimitOrderBook::match(Order* incoming) {
                     resting->quantity -= trade_qty;
                     level.total_quantity -= trade_qty;
                     total_trades++;
+
+                    if (onTrade) {
+                        onTrade(*incoming, *resting, best_ask_price, trade_qty);
+                    }
                 }
 
                 if (resting->quantity == 0) {
@@ -76,6 +89,10 @@ void LimitOrderBook::match(Order* incoming) {
                     resting->quantity -= trade_qty;
                     level.total_quantity -= trade_qty;
                     total_trades++;
+
+                    if (onTrade) {
+                        onTrade(*incoming, *resting, best_bid_price, trade_qty);
+                    }
                 }
 
                 if (resting->quantity == 0) {
