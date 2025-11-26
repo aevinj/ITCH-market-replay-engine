@@ -1,6 +1,7 @@
 #include "LimitOrderBook.h"
 #include <iostream>
 #include <functional>
+#include <optional>
 
 void LimitOrderBook::process_order(int64_t order_id, double price, int32_t quantity, OrderSide side, 
     const std::function<void(const Order&, const Order&, double, int32_t)>& onTrade) {
@@ -33,7 +34,7 @@ void LimitOrderBook::match(Order* incoming, const std::function<void(const Order
     if (incoming->side == OrderSide::Buy) {
         while (incoming->quantity > 0 && !active_asks.empty()) {
             size_t best_ask_idx = *active_asks.begin();
-            double best_ask_price = MIN_PRICE + best_ask_idx * TICK_SIZE;
+            double best_ask_price = min_price + best_ask_idx * TICK_SIZE;
 
             if (incoming->price + EPSILON < best_ask_price) break;
 
@@ -72,7 +73,7 @@ void LimitOrderBook::match(Order* incoming, const std::function<void(const Order
     } else { // incoming->side == Sell
         while (incoming->quantity > 0 && !active_bids.empty()) {
             size_t best_bid_idx = *active_bids.rbegin();
-            double best_bid_price = MIN_PRICE + best_bid_idx * TICK_SIZE;
+            double best_bid_price = min_price + best_bid_idx * TICK_SIZE;
 
             if (incoming->price - EPSILON > best_bid_price) break;
 
@@ -155,25 +156,21 @@ void LimitOrderBook::cancel_order(int64_t order_id) {
     order_pool.deallocate(order_ptr);
 }
 
-void LimitOrderBook::modify_order(int64_t order_id, int32_t new_quantity) {
-    auto order_by_id_it = orders_by_id.find(order_id);
-    if (order_by_id_it == orders_by_id.end()) {
-        // std::cout << "Could not find order: " << order_id << std::endl;
-        return; // Return immediately if not found
-    }
+void LimitOrderBook::reduce_order(int64_t order_id, int32_t cancelled_shares) {
+    auto it = orders_by_id.find(order_id);
+    if (it == orders_by_id.end()) return;
 
-    if (new_quantity <= 0) {
-        std::cout << "Quantity must be positive. Cancelling order " << order_id << " instead." << std::endl;
+    Order* order_ptr = it->second;
+
+    if (cancelled_shares >= order_ptr->quantity) {
         cancel_order(order_id);
         return;
     }
 
-    auto& order_ptr = order_by_id_it->second;
-    auto diff = new_quantity - order_ptr->quantity;
-    order_ptr->quantity = new_quantity;
+    order_ptr->quantity -= cancelled_shares;
 
     size_t idx = price_to_index(order_ptr->price);
-    price_levels[idx].total_quantity += diff;
+    price_levels[idx].total_quantity -= cancelled_shares;
 }
 
 size_t LimitOrderBook::get_total_trades() const {
@@ -182,4 +179,12 @@ size_t LimitOrderBook::get_total_trades() const {
 
 void LimitOrderBook::reset_trade_counter() {
     total_trades = 0;
+}
+
+std::optional<OrderSide> LimitOrderBook::get_side(int64_t order_id) {
+    auto it = orders_by_id.find(order_id);
+    if (it == orders_by_id.end() || it->second == nullptr)
+        return std::nullopt;
+
+    return it->second->side;
 }

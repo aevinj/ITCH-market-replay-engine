@@ -22,7 +22,8 @@ public:
 
     void submitLimit(int64_t order_id, OrderSide side, double price, int32_t qty);
     void cancel(int64_t order_id);
-    void modify(int64_t order_id, int32_t new_qty);
+    void reduce_order(int64_t order_id, int32_t cancelled_shares);
+    void order_replace(int64_t old_order_id, int64_t new_order_id, double price, int32_t qty);
 
 private:
     LimitOrderBook& book_;
