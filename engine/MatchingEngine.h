@@ -25,6 +25,7 @@ public:
     void cancel(int64_t order_id);
     void reduce_order(int64_t order_id, int32_t cancelled_shares);
     void order_replace(int64_t old_order_id, int64_t new_order_id, double price, int32_t qty);
+    std::unique_ptr<LimitOrderBook>& get_book() { return book_; };
 
 private:
     std::unique_ptr<LimitOrderBook> book_;

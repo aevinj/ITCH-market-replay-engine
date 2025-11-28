@@ -188,3 +188,33 @@ std::optional<OrderSide> LimitOrderBook::get_side(int64_t order_id) {
 
     return it->second->side;
 }
+
+LimitOrderBook::BestLevel LimitOrderBook::get_best_ask() const {
+    if (active_asks.empty()) {
+        return {0.0, 0, false};
+    }
+
+    size_t best_ask_idx = *(active_asks.begin());
+    double best_ask_price = min_price + best_ask_idx * TICK_SIZE;
+
+    return {
+        best_ask_price,
+        price_levels[best_ask_idx].total_quantity,
+        true
+    };
+}
+
+LimitOrderBook::BestLevel LimitOrderBook::get_best_bid() const {
+    if (active_bids.empty()) {
+        return {0.0, 0, false};
+    }
+
+    size_t best_bid_idx = *(active_bids.begin());
+    double best_bid_price = min_price + best_bid_idx * TICK_SIZE;
+
+    return {
+        best_bid_price,
+        price_levels[best_bid_idx].total_quantity,
+        true
+    };
+}

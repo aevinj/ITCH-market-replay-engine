@@ -57,6 +57,13 @@ private:
     void insert_order(Order *incoming);
 
 public:
+    // For GUI feedback
+    struct BestLevel {
+        double price = 0.0;
+        int32_t quantity = 0;
+        bool valid = false;
+    };
+
     std::unordered_map<int64_t, Order *> orders_by_id;
     explicit LimitOrderBook(double min_price, double max_price, size_t pool_size = 1'000'000)
         : min_price(min_price), max_price(max_price), num_levels((max_price - min_price) / TICK_SIZE + 1), price_levels(num_levels), order_pool(pool_size)
@@ -78,4 +85,7 @@ public:
 
     size_t get_total_trades() const;
     void reset_trade_counter();
+
+    BestLevel get_best_bid() const;
+    BestLevel get_best_ask() const;
 };

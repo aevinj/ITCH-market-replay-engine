@@ -1,5 +1,7 @@
 #include "LimitOrderBook.h"
 #include "MatchingEngine.h"
+#include "TerminalDashboard.h"
+
 #include <fstream>
 #include <iostream>
 #include <cstdint>
@@ -15,7 +17,7 @@ using namespace std;
 int main()
 {
     ifstream file("../../12302019.NASDAQ_ITCH50", ios::binary);
-    std::ofstream trade_file("aapl_trades.csv");
+    std::ofstream trade_file("trades.csv");
     trade_file << "seq,symbol,taker,maker,price,quantity" << endl;
     static uint64_t trade_seq = 0;
 
@@ -24,6 +26,11 @@ int main()
         cerr << "Failed to open the required ITCH file" << endl;
         return 1;
     }
+
+    TerminalDashboard dashboard({
+        "AAPL","MSFT","AMZN","GOOGL","META","NVDA","TSLA","ORCL","INTC","AMD",
+        "JPM","BAC","GS","MS","WMT","COST","TGT","NFLX","DIS","NKE"
+    });
 
     const unordered_set<string> tracked_symbols = {
         "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "TSLA", "ORCL", "INTC", "AMD",
@@ -84,35 +91,58 @@ int main()
             char issue_classification = payload[25];
             char authenticity = payload[28];
 
-            // Only production, normal, common stock
+            // filter: production, common stock, normal financial status
             if (authenticity != 'P')
-                continue; // drop test issues
+                continue;
             if (issue_classification != 'C')
-                continue; // only common stock
+                continue;
             if (financial_status != 'N' && financial_status != ' ')
                 continue;
 
             locate_to_symbol[stock_locate] = stock;
 
-            locate_to_engine[stock_locate] = make_unique<MatchingEngine>(make_unique<LimitOrderBook>(0,10000));
+            auto lob = std::make_unique<LimitOrderBook>(0, 10000);
+            auto engine_uptr = std::make_unique<MatchingEngine>(std::move(lob));
+            MatchingEngine* engine_raw = engine_uptr.get();
 
             string stock_copy = stock;
-            locate_to_engine[stock_locate]->setTradeCallback([&trade_file, stock_copy](const TradeEvent &ev)
-                                     {
-                std::cout << "TRADE taker=" << ev.taker_id
-                        << " maker=" << ev.maker_id
-                        << " qty="   << ev.quantity
-                        << " px="    << ev.price
-                        << " stock=" << stock_copy << '\n';
+            
+            engine_raw->setTradeCallback(
+                [&trade_file, stock_copy, &dashboard, engine_raw](const TradeEvent& ev)
+                {
+                    // seq counter
+                    trade_seq++;
 
-                trade_seq++;
+                    // write to CSV
+                    // trade_file << trade_seq << ","
+                    //         << stock_copy << ","
+                    //         << ev.taker_id << ","
+                    //         << ev.maker_id << ","
+                    //         << ev.price << ","
+                    //         << ev.quantity << std::endl;
 
-                trade_file << trade_seq << ","
-                        << stock_copy << ","
-                        << ev.taker_id << ","
-                        << ev.maker_id << ","
-                        << ev.price << ","
-                        << ev.quantity << endl; });
+                    // update last trade in dashboard
+                    dashboard.updateTrade(stock_copy, ev.price, ev.quantity);
+
+                    // get best bid/ask from this engine's LOB
+                    auto bid = engine_raw->get_book()->get_best_bid();
+                    auto ask = engine_raw->get_book()->get_best_ask();
+
+                    dashboard.updateBook(
+                        stock_copy,
+                        bid.price,
+                        bid.quantity,
+                        ask.price,
+                        ask.quantity,
+                        bid.valid,
+                        ask.valid
+                    );
+
+                    dashboard.render();
+                }
+            );
+
+            locate_to_engine[stock_locate] = move(engine_uptr);
             continue;
         }
 
@@ -128,16 +158,16 @@ int main()
                 OrderSide side = payload[18] == 'B' ? OrderSide::Buy : OrderSide::Sell;
 
                 uint32_t shares =
-                    ((unsigned char)payload[19] << 24) |
-                    ((unsigned char)payload[20] << 16) |
-                    ((unsigned char)payload[21] << 8) |
-                    ((unsigned char)payload[22]);
+                    (static_cast<unsigned char>(payload[19]) << 24) |
+                    (static_cast<unsigned char>(payload[20]) << 16) |
+                    (static_cast<unsigned char>(payload[21]) << 8) |
+                    (static_cast<unsigned char>(payload[22]));
 
                 uint32_t price_raw =
-                    ((unsigned char)payload[31] << 24) |
-                    ((unsigned char)payload[32] << 16) |
-                    ((unsigned char)payload[33] << 8) |
-                    ((unsigned char)payload[34]);
+                    (static_cast<unsigned char>(payload[31]) << 24) |
+                    (static_cast<unsigned char>(payload[32]) << 16) |
+                    (static_cast<unsigned char>(payload[33]) << 8) |
+                    (static_cast<unsigned char>(payload[34]));
 
                 double price = price_raw / 10000.0;
 
@@ -147,7 +177,7 @@ int main()
             {
                 uint64_t order_id = 0;
                 for (int i = 0; i < 8; i++)
-                    order_id = (order_id << 8) | (unsigned char)payload[10 + i];
+                    order_id = (order_id << 8) | static_cast<unsigned char>(payload[10 + i]);
 
                 engine->cancel(order_id);
             }
@@ -155,12 +185,12 @@ int main()
             {
                 uint64_t order_id = 0;
                 for (int i = 0; i < 8; i++)
-                    order_id = (order_id << 8) | (unsigned char)payload[10 + i];
+                    order_id = (order_id << 8) | static_cast<unsigned char>(payload[10 + i]);
 
                 uint32_t cancelled_shares = 0;
                 for (int i = 0; i < 4; i++)
                 {
-                    cancelled_shares = (cancelled_shares << 8) | (unsigned char)payload[18 + i];
+                    cancelled_shares = (cancelled_shares << 8) | static_cast<unsigned char>(payload[18 + i]);
                 }
 
                 engine->reduce_order(order_id, cancelled_shares);
@@ -169,19 +199,19 @@ int main()
             {
                 uint64_t old_order_id = 0;
                 for (int i = 0; i < 8; i++)
-                    old_order_id = (old_order_id << 8) | (unsigned char)payload[10 + i];
+                    old_order_id = (old_order_id << 8) | static_cast<unsigned char>(payload[10 + i]);
 
                 uint64_t new_order_id = 0;
                 for (int i = 0; i < 8; i++)
-                    new_order_id = (new_order_id << 8) | (unsigned char)payload[18 + i];
+                    new_order_id = (new_order_id << 8) | static_cast<unsigned char>(payload[10 + i]);
 
                 uint32_t qty = 0;
                 for (int i = 0; i < 4; i++)
-                    qty = (qty << 8) | (unsigned char)payload[26 + i];
+                    qty = (qty << 8) | static_cast<unsigned char>(payload[26 + i]);
 
                 uint32_t price = 0;
                 for (int i = 0; i < 4; i++)
-                    price = (price << 8) | (unsigned char)payload[30 + i];
+                    price = (price << 8) | static_cast<unsigned char>(payload[30 + i]);
 
                 double px = price / 10000.0;
                 engine->order_replace(old_order_id, new_order_id, px, qty);
@@ -190,21 +220,18 @@ int main()
             {
                 uint64_t order_id = 0;
                 for (int i = 0; i < 8; i++)
-                    order_id = (order_id << 8) | (unsigned char)payload[10 + i];
+                    order_id = (order_id << 8) | static_cast<unsigned char>(payload[10 + i]);
 
                 uint32_t executed_shares = 0;
                 for (int i = 0; i < 4; i++)
                 {
-                    executed_shares = (executed_shares << 8) | (unsigned char)payload[18 + i];
+                    executed_shares = (executed_shares << 8) | static_cast<unsigned char>(payload[10 + i]);
                 }
 
                 engine->reduce_order(order_id, executed_shares);
             }
         }
     }
-
-    cout << "about to exit" << endl;
-    _Exit(0);
 
     return 0;
 }
