@@ -1,13 +1,20 @@
 #include "LimitOrderBook.h"
 #include <iostream>
+#include <functional>
+#include <optional>
 
-void LimitOrderBook::process_order(int64_t order_id, int64_t price, int32_t quantity, OrderSide side) {
+void LimitOrderBook::process_order(int64_t order_id, double price, int32_t quantity, OrderSide side, 
+    const std::function<void(const Order&, const Order&, double, int32_t)>& onTrade) {
+    price = std::round(price / TICK_SIZE) * TICK_SIZE;
     Order* new_order_ptr = order_pool.allocate();
-    *new_order_ptr = Order{order_id, price, quantity, side};
+    new_order_ptr->order_id = order_id;
+    new_order_ptr->price = price;
+    new_order_ptr->quantity = quantity;
+    new_order_ptr->side = side;
     orders_by_id[order_id] = new_order_ptr;
     
     // try to match
-    match(new_order_ptr);
+    match(new_order_ptr, onTrade);
 
     // if still has quantity, insert into book
     if (new_order_ptr->quantity > 0) {
@@ -18,13 +25,18 @@ void LimitOrderBook::process_order(int64_t order_id, int64_t price, int32_t quan
     }
 }
 
-void LimitOrderBook::match(Order* incoming) {
+void LimitOrderBook::process_order(int64_t order_id, double price, int32_t quantity, OrderSide side)
+{
+    process_order(order_id, price, quantity, side, nullptr);
+}
+
+void LimitOrderBook::match(Order* incoming, const std::function<void(const Order&, const Order&, double, int32_t)>& onTrade) {
     if (incoming->side == OrderSide::Buy) {
         while (incoming->quantity > 0 && !active_asks.empty()) {
             size_t best_ask_idx = *active_asks.begin();
-            double best_ask_price = MIN_PRICE + best_ask_idx * TICK_SIZE;
+            double best_ask_price = min_price + best_ask_idx * TICK_SIZE;
 
-            if (incoming->price < best_ask_price) break;
+            if (incoming->price + EPSILON < best_ask_price) break;
 
             auto& level = price_levels[best_ask_idx];
             auto& orders_vec = level.orders;
@@ -34,9 +46,16 @@ void LimitOrderBook::match(Order* incoming) {
                 if (resting->side != OrderSide::Sell) break;
 
                 int32_t trade_qty = std::min(incoming->quantity, resting->quantity);
-                incoming->quantity -= trade_qty;
-                resting->quantity -= trade_qty;
-                level.total_quantity -= trade_qty;
+                if (trade_qty > 0) {
+                    incoming->quantity -= trade_qty;
+                    resting->quantity -= trade_qty;
+                    level.total_quantity -= trade_qty;
+                    total_trades++;
+
+                    if (onTrade) {
+                        onTrade(*incoming, *resting, best_ask_price, trade_qty);
+                    }
+                }
 
                 if (resting->quantity == 0) {
                     orders_by_id.erase(resting->order_id);
@@ -54,9 +73,9 @@ void LimitOrderBook::match(Order* incoming) {
     } else { // incoming->side == Sell
         while (incoming->quantity > 0 && !active_bids.empty()) {
             size_t best_bid_idx = *active_bids.rbegin();
-            double best_bid_price = MIN_PRICE + best_bid_idx * TICK_SIZE;
+            double best_bid_price = min_price + best_bid_idx * TICK_SIZE;
 
-            if (incoming->price > best_bid_price) break;
+            if (incoming->price - EPSILON > best_bid_price) break;
 
             auto& level = price_levels[best_bid_idx];
             auto& orders_vec = level.orders;
@@ -66,9 +85,16 @@ void LimitOrderBook::match(Order* incoming) {
                 if (resting->side != OrderSide::Buy) break;
 
                 int32_t trade_qty = std::min(incoming->quantity, resting->quantity);
-                incoming->quantity -= trade_qty;
-                resting->quantity -= trade_qty;
-                level.total_quantity -= trade_qty;
+                if (trade_qty > 0) {
+                    incoming->quantity -= trade_qty;
+                    resting->quantity -= trade_qty;
+                    level.total_quantity -= trade_qty;
+                    total_trades++;
+
+                    if (onTrade) {
+                        onTrade(*incoming, *resting, best_bid_price, trade_qty);
+                    }
+                }
 
                 if (resting->quantity == 0) {
                     orders_by_id.erase(resting->order_id);
@@ -130,23 +156,65 @@ void LimitOrderBook::cancel_order(int64_t order_id) {
     order_pool.deallocate(order_ptr);
 }
 
-void LimitOrderBook::modify_order(int64_t order_id, int32_t new_quantity) {
-    auto order_by_id_it = orders_by_id.find(order_id);
-    if (order_by_id_it == orders_by_id.end()) {
-        // std::cout << "Could not find order: " << order_id << std::endl;
-        return; // Return immediately if not found
-    }
+void LimitOrderBook::reduce_order(int64_t order_id, int32_t cancelled_shares) {
+    auto it = orders_by_id.find(order_id);
+    if (it == orders_by_id.end()) return;
 
-    if (new_quantity <= 0) {
-        std::cout << "Quantity must be positive. Cancelling order " << order_id << " instead." << std::endl;
+    Order* order_ptr = it->second;
+
+    if (cancelled_shares >= order_ptr->quantity) {
         cancel_order(order_id);
         return;
     }
 
-    auto& order_ptr = order_by_id_it->second;
-    auto diff = new_quantity - order_ptr->quantity;
-    order_ptr->quantity = new_quantity;
+    order_ptr->quantity -= cancelled_shares;
 
     size_t idx = price_to_index(order_ptr->price);
-    price_levels[idx].total_quantity += diff;
+    price_levels[idx].total_quantity -= cancelled_shares;
+}
+
+size_t LimitOrderBook::get_total_trades() const {
+    return total_trades;
+}
+
+void LimitOrderBook::reset_trade_counter() {
+    total_trades = 0;
+}
+
+std::optional<OrderSide> LimitOrderBook::get_side(int64_t order_id) {
+    auto it = orders_by_id.find(order_id);
+    if (it == orders_by_id.end() || it->second == nullptr)
+        return std::nullopt;
+
+    return it->second->side;
+}
+
+LimitOrderBook::BestLevel LimitOrderBook::get_best_ask() const {
+    if (active_asks.empty()) {
+        return {0.0, 0, false};
+    }
+
+    size_t best_ask_idx = *(active_asks.begin());
+    double best_ask_price = min_price + best_ask_idx * TICK_SIZE;
+
+    return {
+        best_ask_price,
+        price_levels[best_ask_idx].total_quantity,
+        true
+    };
+}
+
+LimitOrderBook::BestLevel LimitOrderBook::get_best_bid() const {
+    if (active_bids.empty()) {
+        return {0.0, 0, false};
+    }
+
+    size_t best_bid_idx = *(active_bids.begin());
+    double best_bid_price = min_price + best_bid_idx * TICK_SIZE;
+
+    return {
+        best_bid_price,
+        price_levels[best_bid_idx].total_quantity,
+        true
+    };
 }

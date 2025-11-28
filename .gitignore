@@ -43,3 +43,6 @@
 # CMake build directory
 /build/
 /build-release/
+
+# ITCH files
+*.*ITCH*
