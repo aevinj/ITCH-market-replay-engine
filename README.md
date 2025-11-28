@@ -1,34 +1,93 @@
-# High-Performance Limit Order Book (LOB)
+# Limit Order Book & NASDAQ ITCH replay simulator
 
-A C++ implementation of a Limit Order Book designed as a foundation for exploring
-**ultra-low-latency trading system components**.  
+This project is a **C++ limit order book and matching engine** that ingests and replays real NASDAQ ITCH 5.0 market data. The system reconstructs and maintains live order books for multiple stocks simultaneously, updating a real-time terminal dashboard with each trade and best bid/ask change.
 
-This repository documents the journey from a simple, correct baseline into an **optimized, cache-friendly, high-performance engine**, inspired by the design principles of High-Frequency Trading (HFT) systems
-
----
-
-## Features (Current Implementation)
-
-- ✅ Add, cancel, and modify limit orders
-- ✅ Matching engine with:
-   - Partial and full fills
-   - Multi-level sweeps
-   - Price–time priority
-- ✅ Stress test framework with invariant checks
-- ✅ Unit test suite (GoogleTest) — 10+ functional tests
-- ✅ Profiling support (gperftools)
-- ✅ Custom memory pool for deterministic order allocation (no heap allocs in hot path)
-- ✅ Fixed tick size (0.01) and bounded price range (90–110)
-- ✅ Price-indexed vector of levels instead of std::map (removes red–black tree overhead)
-- ✅ Active level tracking (best bid/ask lookup in `O(1)`)
-- Reserved capacity for orders_by_id (avoids costly rehashing)
+The project began as a performance-focused limit order book implementation but evolved into a full exchange-style order flow simulator built directly from raw market data, now demonstrating market microstructure handling, low-latency data structures, ITCH parsing, and multi-symbol order book management.
 
 ---
 
-## Benchmark Results (Baseline)
-**Environment:** macOS, Apple M2, Release build
+![Terminal Dashboard demo](assets/OrderBookDemo.gif)
+> Real-time multi-symbol order books updated from NASDAQ ITCH 5.0 replay.
+---
 
-**Workload:** Random 100K operations (add / cancel / modify / match)
+## Key Features
+
+- ✅ Full limit order book with:
+    - Add, cancel, partial cancel, modify (replace)
+    - Price–time priority
+    - Multi-level sweeps
+    - Correct handling of partial and full fills
+- ✅ Matching engine layer with event callbacks for order fills
+- ✅ NASDAQ ITCH 5.0 parser:
+    - Supports A, F, D, X, E, and U messages
+    - Fully processes stock directory (R) messages
+    - Maps stock locate → symbol → matching engine
+    - Filters for production, common stock, normal financial status
+- ✅ Multi-symbol tracking
+    - 20 high-volume US equities included by default (configurable)
+    - Each symbol has its own order book and matching engine
+- ✅ Live terminal dashboard:
+    - Displays for each active symbol:
+        - best bid price and quantity
+        - best ask price and quantity
+        - last trade price and quantity
+    - Uses ANSI terminal refresh, zero external dependencies
+- ✅ Performance-oriented order book design:
+    - Vector-based price levels (cache-friendly)
+    - Vector<Order*> FIFO queues per price level
+    - Pre-allocated memory pool for deterministic, allocation-free hot paths
+    - Reserved hash table capacity for O(1) cancels
+- ✅ Testing suite:
+    - Functional tests for adds, matches, cancels, sweeps, and tick rounding
+    - Stress tests with 100K randomized operations and invariant checks
+
+---
+
+## Design Summary
+
+### Price Ladder
+The LOB uses a contiguous vector of price levels. Prices are converted to indices using:
+
+*index = round((price - min_price) / tick_size)*
+
+This removes tree traversal, improves locality, and produces predictable performance characteristics.
+
+### Matching Engine
+Provides a simple API (submitLimit, cancel, reduce_order, order_replace) and invokes a trade callback on each fill. This callback updates the terminal dashboard and (optionally) writes to CSV.
+
+### ITCH Replay Pipeline
+Main application flow:
+
+**Read ITCH → parse message → identify stock locate → route to matching engine → update LOB → invoke trade callback → update dashboard**
+
+Only symbols in the configured whitelist are tracked, preventing unnecessary memory use.
+
+### Terminal Dashboard
+Lightweight live output showing top-of-book for all tracked stocks. Updated on every trade or quote change. This provides visible, real-time feedback as the ITCH feed replays.
+
+---
+
+## Tracked Symbols
+
+The replay tracks 20 liquid names by default:
+
+**Technology: AAPL, MSFT, AMZN, GOOGL, META, NVDA, TSLA, ORCL, INTC, AMD**
+
+**Financials: JPM, BAC, GS, MS**
+
+**Consumer/Media: WMT, COST, TGT, NFLX, DIS, NKE**
+
+Only symbols that appear in the ITCH stock directory and pass criteria below are activated:
+- authenticity = P (production)
+- issue classification = C (common stock)
+- financial status = N or blank
+
+---
+
+## Performance Overview (Order Book ONLY)
+**Hardware**: Apple M2
+**Build**: Release
+**Test**: 100K random operations (add / cancel / modify / match)
 
 | Stage | Throughput | Notes |
 |-------|------------|-------|
@@ -72,7 +131,7 @@ flowchart TD
 ```
 
 ---
-## Performance Evolution
+## Performance Evolution (Order Book ONLY)
 
 ```mermaid
 flowchart LR
@@ -80,8 +139,9 @@ flowchart LR
     B["Memory Pool<br/>(~55,000 ops/sec)"] 
     C["Vector Levels<br/>(~563,683 ops/sec)"] 
     D["Vector+Reserve<br/>(~785,000 ops/sec)"]
+    E["Final Revision<br/>(5.3M ops/sec)"]
 
-    A --> B --> C --> D
+    A --> B --> C --> D --> E
 ```
 ---
 
@@ -89,32 +149,44 @@ flowchart LR
 Each stage is a milestone in systems-programming design:
 
 1. **Baseline Correctness**
-   - `std::map` for bids/asks
-   - `std::list` for price-time order queues
-   - Naive heap allocation
-   - Stress testing + profiling setup
+    - `std::map` for bids/asks
+    - `std::list` for price-time order queues
+    - Heap-allocated Order objects
+    - Basic add / cancel / match behaviour
+    - Initial stress tests and profiling setup
 
-2. **Optimisations (Current)**
-   - Memory pool allocator
-   - Price-indexed vector levels (integer tick indexing)
-   - Active level tracking sets
-   - Pre-reserved `orders_by_id` capacity
+2. **Core Optimisations**
+    - Replaced tree-based structure with price-indexed vector levels (tick → integer index)
+    - Replaced per-insert heap allocation with a custom memory pool
+    - Introduced active bid/ask tracking sets for O(1) best-price lookup
+    - Added pre-reserved hash table capacity (orders_by_id) to prevent rehash stalls
+    - Corrected price quantisation and matching logic
+    - Achieved multi-million ops/sec throughput
 
-3. **Future Extensions**
-   - Ring buffer for `O(1)` cancels
-   - Flat hash maps for order lookups under high churn
-   - Backtesting integration
-   - Persistent logging of trades
+3. **Market Data Integration**
+    - Implemented NASDAQ ITCH 5.0 message parsing (A & F (treated identically), D, X, E, U, R)
+    - Mapped stock-locate codes to per-symbol matching engines
+    - Added filtering for production securities, common stock, and valid financial status
+    - Added per-symbol last-trade tracking
+    - Added CSV trade logging option
 
----
-
-## Profiling Insights (Baseline)
-Profiling (via gperftools pprof) evolution:
-
-- **Baseline**: ~65% CPU in `libc++` (`std::map`, `std::list`, allocator churn).
-- **With Memory Pool**: Allocation costs gone, but list traversal & tree operations remain bottleneck.
-- **With Vector Levels + Active Sets**: Matching logic dominates runtime; cache locality greatly improved.
-- **With Reserved Hash Table**: Reduced rehashing → smoother throughput in stress tests.
+4. **Multi-Symbol Replay Architecture**
+    - Added configurable tracked-symbol whitelist (20 symbols by default)
+    - Created on-demand LOB + MatchingEngine instances per symbol
+    - Scaled price ladders to global range (0–1000) to support all stocks
+    - Ensured isolation between symbol engines while sharing a single ITCH feed
+5. **Real-Time Terminal Dashboard**
+    - Live top-of-book display for all tracked symbols
+    - Real-time updates on best bid/ask and last trade
+    - ANSI terminal rendering for flicker-free updates
+    - Fully dependency-free, fast enough to update per message callback
+6. **Future Extensions**
+    - Introduce a ring buffer for O(1) cancels with stable pointers
+    - Add time-bucketed analytics (spread, OB imbalance, microprice)
+    - Develop a HTTP/WebSocket dashboard for graphical visualisation
+    - Add multi-threaded architecture (parsing thread → engine threads)
+    - Introduce persistent event logging for replay/analysis
+    - Integrate backtesting or market-reconstruction exports
 
 ---
 
@@ -145,12 +217,10 @@ pprof --text ./build/OrderBookTests profile.out | head -40
 - Google Performance Tools (gperftools)
 
 ### Author's Note
-This project demonstrates a full optimisation journey: from naive STL containers to a cache-friendly, low-latency order book that achieves nearly 800k ops/sec under stress workloads.
+This project reflects an end-to-end journey: starting from a naive order book, progressively optimising it using performance profiling, then extending it into a real exchange-style ITCH replay engine. It demonstrates both software engineering maturity and practical systems-level thinking.
 
 Key takeaways:
 
 - Hardware-aware data structure design yields order-of-magnitude performance gains.
 - Not all optimisations pay off (e.g. pre-reserving per-level storage hurt performance).
 - Measuring, profiling, and iterating are more important than guessing.
-
-This project is portfolio-ready and showcases my ability to apply low-level systems design and performance engineering principles to a real-world trading component.

@@ -41,6 +41,9 @@ int main()
     unordered_map<uint16_t, unique_ptr<MatchingEngine>> locate_to_engine;
     size_t tracked_symbols_count = 0;
 
+    static int buy_adds = 0;
+    static int sell_adds = 0;
+
     while (file)
     {
         uint16_t length_be;
@@ -149,13 +152,20 @@ int main()
         if (locate_to_engine.count(stock_locate))
         {
             unique_ptr<MatchingEngine>& engine = locate_to_engine[stock_locate];
-            if (type == 'A' || type == 'F')
+            if (type == 'A')
             {
                 uint64_t order_id = 0;
                 for (int i = 0; i < 8; i++)
                     order_id = (order_id << 8) | (unsigned char)payload[10 + i];
 
                 OrderSide side = payload[18] == 'B' ? OrderSide::Buy : OrderSide::Sell;
+                // system("clear");
+                // if (payload[18] == 'B') {
+                //     buy_adds++;
+                // } else if (payload[18] == 'S') {
+                //     sell_adds++;
+                // }
+                // cout << "buys: " << buy_adds << " and sells: " << sell_adds << endl;
 
                 uint32_t shares =
                     (static_cast<unsigned char>(payload[19]) << 24) |
@@ -203,7 +213,7 @@ int main()
 
                 uint64_t new_order_id = 0;
                 for (int i = 0; i < 8; i++)
-                    new_order_id = (new_order_id << 8) | static_cast<unsigned char>(payload[10 + i]);
+                    new_order_id = (new_order_id << 8) | static_cast<unsigned char>(payload[18 + i]);
 
                 uint32_t qty = 0;
                 for (int i = 0; i < 4; i++)
@@ -225,7 +235,7 @@ int main()
                 uint32_t executed_shares = 0;
                 for (int i = 0; i < 4; i++)
                 {
-                    executed_shares = (executed_shares << 8) | static_cast<unsigned char>(payload[10 + i]);
+                    executed_shares = (executed_shares << 8) | static_cast<unsigned char>(payload[18 + i]);
                 }
 
                 engine->reduce_order(order_id, executed_shares);

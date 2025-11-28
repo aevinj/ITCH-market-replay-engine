@@ -209,7 +209,7 @@ LimitOrderBook::BestLevel LimitOrderBook::get_best_bid() const {
         return {0.0, 0, false};
     }
 
-    size_t best_bid_idx = *(active_bids.begin());
+    size_t best_bid_idx = *(active_bids.rbegin());
     double best_bid_price = min_price + best_bid_idx * TICK_SIZE;
 
     return {
