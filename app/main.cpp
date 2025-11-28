@@ -203,7 +203,7 @@ int main()
 
                 uint64_t new_order_id = 0;
                 for (int i = 0; i < 8; i++)
-                    new_order_id = (new_order_id << 8) | static_cast<unsigned char>(payload[10 + i]);
+                    new_order_id = (new_order_id << 8) | static_cast<unsigned char>(payload[18 + i]);
 
                 uint32_t qty = 0;
                 for (int i = 0; i < 4; i++)
@@ -225,7 +225,7 @@ int main()
                 uint32_t executed_shares = 0;
                 for (int i = 0; i < 4; i++)
                 {
-                    executed_shares = (executed_shares << 8) | static_cast<unsigned char>(payload[10 + i]);
+                    executed_shares = (executed_shares << 8) | static_cast<unsigned char>(payload[18 + i]);
                 }
 
                 engine->reduce_order(order_id, executed_shares);

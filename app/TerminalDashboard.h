@@ -34,7 +34,7 @@ public:
     void updateTrade(const std::string& symbol,
                      double trade_price, int32_t trade_qty);
 
-    // Redraw the whole table
+    // Redraw the table
     void render() const;
 
 private:
