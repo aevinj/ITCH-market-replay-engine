@@ -1,8 +1,9 @@
 #pragma once
 
+#include "LimitOrderBook.h"
 #include <functional>
 #include <cstdint>
-#include "LimitOrderBook.h"
+#include <memory>
 
 struct TradeEvent {
     int64_t taker_id;
@@ -15,8 +16,8 @@ class MatchingEngine {
 public:
     using TradeCallback = std::function<void(const TradeEvent&)>;
 
-    explicit MatchingEngine(LimitOrderBook& book)
-        : book_(book) {}
+    explicit MatchingEngine(std::unique_ptr<LimitOrderBook> book)
+        : book_(std::move(book)) {};
 
     void setTradeCallback(TradeCallback cb) { onTrade_ = std::move(cb); }
 
@@ -26,6 +27,6 @@ public:
     void order_replace(int64_t old_order_id, int64_t new_order_id, double price, int32_t qty);
 
 private:
-    LimitOrderBook& book_;
+    std::unique_ptr<LimitOrderBook> book_;
     TradeCallback onTrade_;
 };

@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <string>
+#include <memory>
 
 using namespace std;
 
@@ -30,7 +31,7 @@ int main()
 
     unordered_map<uint16_t, string> locate_to_symbol;
 
-    unordered_map<uint16_t, MatchingEngine *> locate_to_engine;
+    unordered_map<uint16_t, unique_ptr<MatchingEngine>> locate_to_engine;
     size_t tracked_symbols_count = 0;
 
     while (file)
@@ -93,11 +94,10 @@ int main()
 
             locate_to_symbol[stock_locate] = stock;
 
-            LimitOrderBook *lob = new LimitOrderBook(0, 10000);
-            MatchingEngine *engine = new MatchingEngine(*lob);
+            locate_to_engine[stock_locate] = make_unique<MatchingEngine>(make_unique<LimitOrderBook>(0,10000));
 
             string stock_copy = stock;
-            engine->setTradeCallback([&trade_file, stock_copy](const TradeEvent &ev)
+            locate_to_engine[stock_locate]->setTradeCallback([&trade_file, stock_copy](const TradeEvent &ev)
                                      {
                 std::cout << "TRADE taker=" << ev.taker_id
                         << " maker=" << ev.maker_id
@@ -113,13 +113,12 @@ int main()
                         << ev.maker_id << ","
                         << ev.price << ","
                         << ev.quantity << endl; });
-            locate_to_engine[stock_locate] = engine;
             continue;
         }
 
         if (locate_to_engine.count(stock_locate))
         {
-            MatchingEngine *engine = locate_to_engine[stock_locate];
+            unique_ptr<MatchingEngine>& engine = locate_to_engine[stock_locate];
             if (type == 'A' || type == 'F')
             {
                 uint64_t order_id = 0;
@@ -203,6 +202,9 @@ int main()
             }
         }
     }
+
+    cout << "about to exit" << endl;
+    _Exit(0);
 
     return 0;
 }
